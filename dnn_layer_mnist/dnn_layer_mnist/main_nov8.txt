@@ -1,0 +1,215 @@
+// Copyright 2025
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// MNIST DNN Layer Test Program for CVA6-Ara2
+
+#include <stdint.h>
+#include <string.h>
+#include <math.h>
+
+#include "kernel/dnn_layer.h"
+#include "runtime.h"
+#include "util.h"
+
+// RISC-V CSR access for cycle counting
+// #define read_csr(reg) ({ unsigned long __tmp; \
+//   asm volatile ("csrr %0, " #reg : "=r"(__tmp)); \
+//   __tmp; })
+
+#ifdef SPIKE
+#include <stdio.h>
+#elif defined ARA_LINUX
+#include <stdio.h>
+#else
+#include "printf.h"
+#endif
+// printf("includes set up:\n");
+// Configuration from mnist_data.S
+extern uint64_t batch_size;
+extern uint64_t input_size;
+extern uint64_t output_size;
+extern float bn_epsilon;
+
+// printf("config set up:\n");
+// printf("  Batch norm epsilon: %f\n", bn_epsilon);
+// printf("  Batch size: %lu\n", batch_size);
+// printf("  Input size: %lu\n", input_size);
+// printf("  Output size: %lu\n", output_size);
+
+// Input data and parameters
+extern float input_data[] __attribute__((aligned(4 * NR_LANES)));
+extern float weights[] __attribute__((aligned(4 * NR_LANES)));
+extern float bn_gamma[] __attribute__((aligned(4 * NR_LANES)));
+extern float bn_beta[] __attribute__((aligned(4 * NR_LANES)));
+extern float bn_mean[] __attribute__((aligned(4 * NR_LANES)));
+extern float bn_var[] __attribute__((aligned(4 * NR_LANES)));
+
+// printf("data set up:\n");
+// DNN layer parameters and configuration
+// Output buffers
+extern float output_vec[] __attribute__((aligned(4 * NR_LANES)));
+extern float output_scalar[] __attribute__((aligned(4 * NR_LANES)));
+extern float temp_buffer[] __attribute__((aligned(4 * NR_LANES)));
+
+// Gold reference
+extern float gold_output[] __attribute__((aligned(4 * NR_LANES)));
+
+// printf("gold reference set up:\n");
+// Verification threshold
+#define THRESHOLD 0.01f
+
+// Verification function
+static int verify_result(const float *result, const float *gold, size_t size, float threshold) {
+    int errors = 0;
+    float max_error = 0.0f;
+    float sum_result = 0.0f, sum_gold = 0.0f;
+    
+    for (size_t i = 0; i < size; i++) {
+        sum_result += result[i];
+        sum_gold += gold[i];
+        
+        float diff = fabsf(result[i] - gold[i]);
+        float rel_error = (gold[i] != 0.0f) ? (diff / fabsf(gold[i])) : diff;
+        
+        if (rel_error > threshold) {
+            if (errors < 3) {
+                printf("Error at index %zu: got %f, expected %f (rel_error: %f)\n",
+                       i, result[i], gold[i], rel_error);
+            }
+            errors++;
+            if (diff > max_error) {
+                max_error = diff;
+            }
+        }
+    }
+    
+    printf("Verification stats:\n");
+    printf("  Result sum: %f, Gold sum: %f\n", sum_result, sum_gold);
+    printf("  Max error: %f, Errors: %d/%zu\n", max_error, errors, size);
+    
+    return errors;
+}
+
+// Validate softmax properties
+static int validate_softmax(const float *output, size_t size) {
+    float sum = 0.0f;
+    int negative_count = 0;
+    float min_val = output[0], max_val = output[0];
+    
+    for (size_t i = 0; i < size; i++) {
+        sum += output[i];
+        if (output[i] < 0.0f) negative_count++;
+        if (output[i] < min_val) min_val = output[i];
+        if (output[i] > max_val) max_val = output[i];
+    }
+    
+    printf("Softmax properties:\n");
+    printf("  Sum: %f (should be ~1.0)\n", sum);
+    printf("  Range: [%f, %f]\n", min_val, max_val);
+    printf("  Negative values: %d (should be 0)\n", negative_count);
+    
+    int valid = (fabsf(sum - 1.0f) < 0.1f && negative_count == 0) ? 0 : 1;
+    return valid;
+}
+// printf("Softmax validation: %s\n", validate_softmax(output_vec, output_size) == 0 ? "PASSED" : "FAILED");
+
+// Find predicted class and confidence
+static void analyze_prediction(const float *output, size_t size) {
+    size_t predicted_class = 0;
+    float max_confidence = output[0];
+    
+    for (size_t i = 1; i < size; i++) {
+        if (output[i] > max_confidence) {
+            max_confidence = output[i];
+            predicted_class = i;
+        }
+    }
+    
+    printf("Prediction analysis:\n");
+    printf("  Predicted class: %zu\n", predicted_class);
+    printf("  Confidence: %.3f%%\n", max_confidence * 100.0f);
+}
+// printf("Prediction analysis set up:\n");
+
+int main() {
+    printf("MNIST DNN LAYER TEST\n");
+    printf("====================\n");
+    
+    // Setup configuration
+    printf("batch_size: %lu, input_size: %lu, output_size: %lu\n", 
+           batch_size, input_size, output_size);
+    dnn_config_t config = {
+        .batch_size = batch_size,
+        .input_size = input_size,
+        .output_size = output_size
+    };
+    
+    printf("DNN configuration set up:\n");
+    dnn_params_t params = {
+        .weights = weights,
+        .bn_gamma = bn_gamma,
+        .bn_beta = bn_beta,
+        .bn_mean = bn_mean,
+        .bn_var = bn_var,
+        .bn_epsilon = bn_epsilon
+    };
+    printf("DNN parameters set up:\n");
+    
+    printf("Configuration: %lux%lu -> %lu\n", batch_size, input_size, output_size);
+    
+    // Run scalar implementation
+    printf("\nRunning SCALAR Implementation...\n");
+    start_timer();
+
+    dnn_layer_forward_scalar(output_scalar, input_data, &params, &config, temp_buffer);
+    printf("  completed dnn_layer_forward_scalar call\n");
+    stop_timer();
+    int64_t scalar_cycles = get_timer();
+    printf("  Scalar execution completed: %ld cycles\n", scalar_cycles);
+    
+    // Validate scalar result
+    printf("Verifying scalar result against gold...\n");
+    int scalar_errors = verify_result(output_scalar, gold_output, output_size, THRESHOLD);
+    validate_softmax(output_scalar, output_size);
+    analyze_prediction(output_scalar, output_size);
+    printf("Scalar implementation: %s\n", (scalar_errors <= 5) ? "PASSED" : "FAILED");
+    
+    // Run vectorized implementation
+    printf("\nRunning VECTORIZED Implementation...\n");
+    start_timer();
+    dnn_layer_forward(output_vec, input_data, &params, &config, temp_buffer);
+    stop_timer();
+    int64_t vector_cycles = get_timer();
+    printf("  Vector execution: %ld cycles\n", vector_cycles);
+    
+
+    // Validate vector result
+    printf("Verifying vectorized result against gold...\n");
+    int vector_errors = verify_result(output_vec, gold_output, output_size, THRESHOLD);
+    validate_softmax(output_vec, output_size);
+    analyze_prediction(output_vec, output_size);
+    printf("Vectorized implementation: %s\n", (vector_errors <= 5) ? "PASSED" : "FAILED");
+    
+    // Compare implementations
+    printf("\nComparing Scalar vs Vectorized Implementations...\n");
+    int consistency_errors = verify_result(output_vec, output_scalar, output_size, THRESHOLD);
+    printf("Implementation consistency: %s\n", (consistency_errors <= 5) ? "PASSED" : "FAILED");
+    
+    // Performance summary
+    if (vector_cycles > 0 && scalar_cycles > 0) {
+        double speedup = (double)scalar_cycles / (double)vector_cycles;
+        printf("\nPerformance Summary:\n");
+        printf("  Scalar cycles: %lu\n", scalar_cycles);
+        printf("  Vector cycles: %lu\n", vector_cycles);
+        printf("  Measured speedup: %.2fx\n", speedup);
+        printf("Performance: Scalar=%lu cycles, Vector=%lu cycles, Speedup=%.2fx\n", 
+               scalar_cycles, vector_cycles, speedup);
+    }
+    
+    // Final result
+    int overall_pass = (scalar_errors <= 5) && (vector_errors <= 5) && (consistency_errors <= 5);
+    printf("\n%s\n", overall_pass ? "MNIST DNN LAYER TEST PASSED" : "MNIST DNN LAYER TEST FAILED");
+    
+    return overall_pass ? 0 : 1;
+}
