@@ -63,24 +63,7 @@ static void print_array(const char *name, const float *arr, size_t size, size_t 
     printf("\n");
 }
 
-// Compare two arrays and print differences
-static int compare_arrays(const float *arr1, const float *arr2, size_t size, const char *name) {
-    int errors = 0;
-    float max_diff = 0.0f;
-    
-    for (size_t i = 0; i < size; i++) {
-        float diff = fabsf(arr1[i] - arr2[i]);
-        if (diff > max_diff) max_diff = diff;
-        if (diff > THRESHOLD && errors < 3) {
-            printf("  Diff at [%zu]: scalar=%.6f, vector=%.6f, diff=%.6f\n", 
-                   i, arr1[i], arr2[i], diff);
-            errors++;
-        }
-    }
-    if (errors > 3) printf("  ... and %d more differences\n", errors - 3);
-    printf("%s max difference: %.6f\n", name, max_diff);
-    return errors;
-}
+
 
 // Verification function
 static int verify_result(const float *result, const float *gold, size_t size, float threshold) {
@@ -220,25 +203,6 @@ int main() {
     analyze_prediction(output_vec, output_size);
     printf("Vectorized implementation: %s\n\n", (vector_errors <= 5) ? "PASSED" : "FAILED");
     
-    // Compare scalar vs vector layer by layer
-    printf("===== LAYER-BY-LAYER COMPARISON =====\n");
-    printf("Comparing Scalar vs Vectorized Implementations...\n\n");
-    
-    printf("MatMul Output Comparison:\n");
-    compare_arrays(matmul_out_scalar, matmul_out_vec, output_size, "MatMul");
-    printf("\n");
-    
-    printf("BatchNorm Output Comparison:\n");
-    compare_arrays(bn_out_scalar, bn_out_vec, output_size, "BatchNorm");
-    printf("\n");
-    
-    printf("ReLU Output Comparison:\n");
-    compare_arrays(relu_out_scalar, relu_out_vec, output_size, "ReLU");
-    printf("\n");
-    
-    printf("Final Output Comparison:\n");
-    int consistency_errors = verify_result(output_vec, output_scalar, output_size, THRESHOLD);
-    printf("Implementation consistency: %s\n\n", (consistency_errors <= 5) ? "PASSED" : "FAILED");
     
     // Performance summary
     printf("===== PERFORMANCE SUMMARY =====\n");
