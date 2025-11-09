@@ -25,6 +25,10 @@
 void fmatmul(float *c, const float *a, const float *b, unsigned long int m,
              unsigned long int n, unsigned long int p);
 
+void fmatmul_gemv_simple(float *c, const float *a, const float *b,
+                         const unsigned long int N, const unsigned long int P);
+
+
 void fmatmul_4x4(float *c, const float *a, const float *b,
                  unsigned long int m, unsigned long int n, unsigned long int p);
 void fmatmul_vec_4x4_slice_init();
@@ -43,10 +47,6 @@ void fmatmul_16x16(float *c, const float *a, const float *b,
 void fmatmul_vec_16x16_slice_init();
 void fmatmul_vec_16x16(float *c, const float *a, const float *b,
                        unsigned long int n, unsigned long int p);
-
-// Simple vector implementation for DNN
-void fmatmul_vec_simple(float *output, const float *input, const float *weights,
-                       uint64_t batch_size, uint64_t input_size, uint64_t output_size);
 
 #define DELTA 0.000001
 

@@ -27,6 +27,15 @@ typedef struct {
     float bn_epsilon;       // Small constant for numerical stability
 } dnn_params_t;
 
+// Timing structure for layer profiling
+typedef struct {
+    int64_t matmul_cycles;
+    int64_t batchnorm_cycles;
+    int64_t relu_cycles;
+    int64_t softmax_cycles;
+    int64_t total_cycles;
+} layer_timing_t;
+
 /**
  * @brief Execute a complete DNN feedforward layer
  * 
@@ -48,5 +57,23 @@ void dnn_layer_forward(float *output, const float *input,
 void dnn_layer_forward_scalar(float *output, const float *input,
                               const dnn_params_t *params, const dnn_config_t *config,
                               float *temp_buffer);
+
+/**
+ * @brief Execute DNN layer with detailed timing (vectorized)
+ * 
+ * @param timing Output parameter for timing breakdown
+ */
+void dnn_layer_forward_timed(float *output, const float *input,
+                             const dnn_params_t *params, const dnn_config_t *config,
+                             float *temp_buffer, layer_timing_t *timing);
+
+/**
+ * @brief Execute DNN layer with detailed timing (scalar)
+ * 
+ * @param timing Output parameter for timing breakdown
+ */
+void dnn_layer_forward_scalar_timed(float *output, const float *input,
+                                   const dnn_params_t *params, const dnn_config_t *config,
+                                   float *temp_buffer, layer_timing_t *timing);
 
 #endif // __DNN_LAYER_H__

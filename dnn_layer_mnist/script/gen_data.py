@@ -110,6 +110,44 @@ class MNISTDNNLayer:
         
         return loss
 
+def emit_debug_buffers(output_size):
+    """Emit debug buffers for intermediate layer outputs"""
+    print("# Debug buffers for layer-by-layer comparison")
+    print(".section .data")
+    print(".align 5")
+    print()
+    
+    # Scalar implementation debug buffers
+    print(".globl matmul_out_scalar")
+    print("matmul_out_scalar:")
+    print(f"    .zero {output_size * 4}  # {output_size} outputs * 4 bytes per float")
+    print()
+    
+    print(".globl bn_out_scalar")
+    print("bn_out_scalar:")
+    print(f"    .zero {output_size * 4}")
+    print()
+    
+    print(".globl relu_out_scalar")
+    print("relu_out_scalar:")
+    print(f"    .zero {output_size * 4}")
+    print()
+    
+    # Vector implementation debug buffers
+    print(".globl matmul_out_vec")
+    print("matmul_out_vec:")
+    print(f"    .zero {output_size * 4}")
+    print()
+    
+    print(".globl bn_out_vec")
+    print("bn_out_vec:")
+    print(f"    .zero {output_size * 4}")
+    print()
+    
+    print(".globl relu_out_vec")
+    print("relu_out_vec:")
+    print(f"    .zero {output_size * 4}")
+    print()
 def emit_assembly_to_stdout(model, test_input, expected_output):
     """Emit assembly data to stdout for build system"""
     
@@ -146,6 +184,7 @@ def emit_assembly_to_stdout(model, test_input, expected_output):
                 print("    .word 0xdeadbeef  # padding")
         print()
     
+    
     # Assembly header
     print("# Generated MNIST DNN data for Ara")
     print("# Single test sample + trained model parameters")
@@ -174,7 +213,10 @@ def emit_assembly_to_stdout(model, test_input, expected_output):
     emit_array("output_vec", np.zeros(model.output_size, dtype=np.float32))
     emit_array("output_scalar", np.zeros(model.output_size, dtype=np.float32))
     emit_array("temp_buffer", np.zeros(max(model.input_size, model.output_size) * 4, dtype=np.float32))
-
+    
+    # ADD THIS LINE:
+    emit_debug_buffers(model.output_size)
+    
 def main():
     # Configuration - Improved training parameters
     INPUT_SIZE = 784
