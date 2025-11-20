@@ -79,25 +79,20 @@ void dnn_layer_forward(float *output, const float *input,
 }
 
 
-// Standard scalar implementation of fmatmul_scalar (C = A * B^T)
-static void fmatmul_scalar(float *c, const float *a, const float *b,
+static void fmatmul_scalar(float *c, const float *a, const float *b_transposed,
                            unsigned long int M, unsigned long int N, unsigned long int P) {
-    // M = batch_size
-    // N = input_size
-    // P = output_size
-    
-    for (unsigned long int m = 0; m < M; ++m) {        // Iterate rows of A (batch_size)
-        for (unsigned long int p = 0; p < P; ++p) {    // Iterate rows of B (output_size)
+    // b_transposed is now [N x P] instead of [P x N]
+    for (unsigned long int m = 0; m < M; ++m) {
+        for (unsigned long int p = 0; p < P; ++p) {
             float sum = 0.0f;
-            for (unsigned long int n = 0; n < N; ++n) { // Iterate cols of A and B (input_size)
-                // C[m,p] += A[m,n] * B[p,n]
-                sum += a[m * N + n] * b[p * N + n];
+            for (unsigned long int n = 0; n < N; ++n) {
+                // Access transposed weights: b[n, p] = b_transposed[n*P + p]
+                sum += a[m * N + n] * b_transposed[n * P + p];
             }
             c[m * P + p] = sum;
         }
     }
 }
-
 // Corrected softmax_scalar implementation
 static void softmax_scalar_impl(const float *i, float *o, float *buf,
                                 uint64_t channels, uint64_t innerSize) {
