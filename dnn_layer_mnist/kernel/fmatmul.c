@@ -21,6 +21,85 @@
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+// OPTIMIZATION 1: Pre-transpose weights for contiguous access
+// Instead of strided loads, use contiguous loads
+
+void fmatmul_gemv_optimized(float *c, const float *a, const float *b_transposed,
+                            const unsigned long int N, const unsigned long int P) {
+    // Now b_transposed is [N x P] instead of [P x N]
+    // Each output element needs to access b_transposed[n*P + p:p+vl]
+    
+    unsigned long int avl = P;
+    
+    for (unsigned long int p = 0; p < P; p += avl) {
+        unsigned long int vl;
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(vl) : "r"(P - p));
+        avl = vl;
+        
+        // Initialize accumulator to zero
+        asm volatile("vmv.v.i v8, 0");
+        
+        // Compute dot products for P outputs
+        for (unsigned long int n = 0; n < N; n++) {
+            float a_elem = a[n];
+            
+            // CONTIGUOUS LOAD: b_transposed[n*P + p : n*P + p + vl]
+            const float *b_ptr = b_transposed + n * P + p;
+            asm volatile("vle32.v v16, (%0)" :: "r"(b_ptr));
+            
+            // Multiply-accumulate: v8 += a_elem * v16
+            asm volatile("vfmacc.vf v8, %0, v16" :: "f"(a_elem));
+        }
+        
+        // Store result
+        float *c_ptr = c + p;
+        asm volatile("vse32.v v8, (%0)" :: "r"(c_ptr));
+    }
+}
+
+// Alternative: Blocked/tiled approach for better cache utilization
+void fmatmul_gemv_blocked(float *c, const float *a, const float *b,
+                          const unsigned long int N, const unsigned long int P) {
+    const unsigned long int BLOCK_N = 32; // Tune based on cache size
+    
+    // Zero output
+    for (unsigned long int p = 0; p < P; p++) {
+        c[p] = 0.0f;
+    }
+    
+    // Process input in blocks
+    for (unsigned long int n_start = 0; n_start < N; n_start += BLOCK_N) {
+        unsigned long int n_end = (n_start + BLOCK_N < N) ? n_start + BLOCK_N : N;
+        
+        unsigned long int avl = P;
+        for (unsigned long int p = 0; p < P; p += avl) {
+            unsigned long int vl;
+            asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(vl) : "r"(P - p));
+            avl = vl;
+            
+            // Load current accumulator
+            const float *c_ptr = c + p;
+            asm volatile("vle32.v v8, (%0)" :: "r"(c_ptr));
+            
+            // Process block
+            for (unsigned long int n = n_start; n < n_end; n++) {
+                float a_elem = a[n];
+                
+                // Strided load within block (smaller stride, better locality)
+                const float *b_ptr = b + p * N + n;
+                asm volatile("vlse32.v v16, (%0), %1" :: "r"(b_ptr), "r"(N * sizeof(float)));
+                
+                // Multiply-accumulate
+                asm volatile("vfmacc.vf v8, %0, v16" :: "f"(a_elem));
+            }
+            
+            // Store back accumulator
+            float *c_out = c + p;
+            asm volatile("vse32.v v8, (%0)" :: "r"(c_out));
+        }
+    }
+}
+
 void fmatmul(float *c, const float *a, const float *b,
              const unsigned long int M, const unsigned long int N,
              const unsigned long int P) {

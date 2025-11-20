@@ -1,0 +1,232 @@
+DNN Layer Optimization Roadmap
+Current Performance Analysis
+
+Layer	Scalar Cycles	Vector Cycles	Current Speedup	Theoretical Max
+MatMul	74229	31592	2.35x	~100x
+BatchNorm	717	628	1.14x	~100x
+ReLU	194	98	1.98x	~100x
+Softmax	3679	2859	1.29x	~20x
+Total	84167	38681	2.18x	~50-80x
+
+Bottleneck Analysis
+1. MatMul (48% of total time) - CRITICAL
+
+Problem: Strided loads with 3136-byte stride
+
+    Cache line is typically 64 bytes
+    Each vector element from different cache line
+    Memory bandwidth: ~50 GB/s wasted
+
+Fix Priority: ⭐⭐⭐⭐⭐ HIGHEST
+2. Softmax (9% of total time)
+
+Problem: Scalar exp() inside vector loop
+
+    Calling scalar function 10 times per iteration
+    Function call overhead + scalar execution
+
+Fix Priority: ⭐⭐⭐⭐ HIGH
+3. BatchNorm (1.6% of total time)
+
+Problem: Too many vector instructions (8 loads + 6 compute)
+
+    Can reduce to 5 loads + 5 compute
+    Or 4 loads + 4 compute with fused operations
+
+Fix Priority: ⭐⭐⭐ MEDIUM
+4. ReLU (0.2% of total time)
+
+Status: Already decent at 1.98x
+
+    Not worth optimizing further
+    Already using efficient mask operations
+
+Fix Priority: ⭐ LOW
+Phase 1: MatMul Optimization (Expected: 2.35x → 15-20x)
+Option A: Pre-transpose Weights ✅ RECOMMENDED
+c
+
+// In gen_data.py, emit transposed weights:
+emit_array("weights_transposed", model.weights.T.astype(np.float32))
+
+// In C code: Use contiguous loads
+void fmatmul_gemv_transposed(float *c, const float *a, const float *b_T,
+                             const unsigned long int N, const unsigned long int P) {
+    for (unsigned long int p = 0; p < P; p += vl) {
+        vsetvli(vl, P - p, e32, m8);
+        vmv.v.i v8, 0;  // accumulator
+        
+        for (unsigned long int n = 0; n < N; n++) {
+            float a_n = a[n];
+            // CONTIGUOUS LOAD: b_T[n*P + p : n*P + p + vl]
+            vle32.v v16, (b_T + n*P + p);
+            vfmacc.vf v8, a_n, v16;
+        }
+        vse32.v v8, (c + p);
+    }
+}
+
+Expected Improvement:
+
+    Memory accesses: 784 × 10 contiguous vs 784 × 10 strided
+    Estimated speedup: 2.35x → 15-20x
+    New cycles: ~3500-4000 (down from 31592)
+
+Option B: Blocked Strided Loads
+
+If can't change weight layout:
+c
+
+// Process in blocks of 32 to improve cache reuse
+for (n_block = 0; n_block < N; n_block += 32) {
+    // Strided loads within block have better locality
+    // Same stride but fits in cache
+}
+
+Expected Improvement: 2.35x → 8-10x
+Phase 2: Softmax Optimization (Expected: 1.29x → 8-12x)
+Vectorize exp() computation
+
+Approach 1: Taylor Series (good for [-10, 0] range)
+c
+
+// exp(x) ≈ 1 + x + x²/2 + x³/6 + x⁴/24 + x⁵/120
+// 5th order accurate to 0.001% for |x| < 2
+vector_exp_taylor_v8(v_out, v_in, vl);
+
+Approach 2: Use existing Ara exp library
+c
+
+// Check if exp.h has vector version
+#include "../softmax/lib/exp.h"
+// Use exp_vec() if available
+
+Expected Improvement:
+
+    No scalar function calls
+    Estimated speedup: 1.29x → 8-12x
+    New cycles: ~300-400 (down from 2859)
+
+Phase 3: BatchNorm Optimization (Expected: 1.14x → 10-15x)
+Reduce instruction count
+
+Current: 8 vector instructions per iteration Optimized: 5 vector instructions
+c
+
+// Fuse operations:
+// output = gamma * (input - mean) / sqrt(var + eps) + beta
+// Rewrite as: output = input * scale + offset
+// Where: scale = gamma / sqrt(var + eps)
+//        offset = beta - mean * scale
+
+// Precompute scale and offset once
+vle32.v v_gamma, gamma;
+vle32.v v_var, var;
+vfadd.vf v_var, v_var, epsilon;
+vfsqrt.v v_var, v_var;
+vfdiv.vv v_scale, v_gamma, v_var;  // scale
+
+vle32.v v_mean, mean;
+vle32.v v_beta, beta;
+vfmul.vv v_temp, v_mean, v_scale;
+vfsub.vv v_offset, v_beta, v_temp;  // offset
+
+// Then for each input:
+vle32.v v_in, input;
+vfmadd.vv v_in, v_scale, v_offset;  // in*scale + offset
+vse32.v v_in, output;
+
+Expected Improvement: 1.14x → 10-15x
+
+    New cycles: ~50-70 (down from 628)
+
+Phase 4: Additional Optimizations
+A. Use LMUL effectively
+
+Current: m8 everywhere
+
+    Consider m4 for smaller operations
+    Reduces register pressure
+    Allows better instruction scheduling
+
+B. Instruction scheduling
+c
+
+// Interleave loads and compute to hide latency
+vle32.v v8, addr1;     // Load 1
+vle32.v v16, addr2;    // Load 2 (while load 1 in flight)
+vfadd.vv v8, v8, v16;  // Compute (while load 2 in flight)
+
+C. Use vfrsqrt for 1/sqrt
+
+If available on Ara:
+c
+
+// Instead of: vfsqrt + vfdiv
+vfsqrt.v v_std, v_var;
+vfdiv.vv v_result, v_in, v_std;
+
+// Use: vfrsqrt (reciprocal sqrt)
+vfrsqrt.v v_inv_std, v_var;
+vfmul.vv v_result, v_in, v_inv_std;  // Faster!
+
+Expected Final Performance
+Conservative Estimate (Phase 1 + Phase 2)
+
+Layer	Original	After Opt	Speedup vs Scalar
+MatMul	31592	4000	18.5x
+Softmax	2859	350	10.5x
+BatchNorm	628	628	1.14x
+ReLU	98	98	1.98x
+Total	38681	5576	15.1x
+
+Optimistic Estimate (All Phases)
+
+Layer	Original	After Opt	Speedup vs Scalar
+MatMul	31592	3500	21.2x
+Softmax	2859	300	12.3x
+BatchNorm	628	60	12.0x
+ReLU	98	98	1.98x
+Total	38681	4458	18.9x
+
+Implementation Order
+
+    Week 1: MatMul transpose optimization
+        Modify gen_data.py to emit transposed weights
+        Update fmatmul.c to use contiguous loads
+        Target: 2.35x → 15x
+    Week 2: Softmax vectorization
+        Implement vector exp using Taylor series
+        Test accuracy vs scalar
+        Target: 1.29x → 10x
+    Week 3: BatchNorm fusion
+        Reduce instruction count
+        Precompute scale/offset if possible
+        Target: 1.14x → 10x
+    Week 4: Fine-tuning
+        Instruction scheduling
+        LMUL optimization
+        Benchmark and profile
+
+Testing Strategy
+
+After each optimization:
+
+    Run verification tests (accuracy < 1% error)
+    Profile with perf counters:
+        Cache misses
+        Memory bandwidth utilization
+        Vector utilization %
+    Compare against theoretical max
+    Document results
+
+Theoretical Maximum Achievable
+
+With VLEN=4096 and perfect vectorization:
+
+    MatMul: 128 elements/cycle → ~50-80x speedup
+    Overall: Limited by memory bandwidth
+    Realistic Target: 20-30x overall speedup
+    Stretch Goal: 40-50x with perfect optimization
+
+Current 2.18x → Target 20-30x = 10-15x improvement needed

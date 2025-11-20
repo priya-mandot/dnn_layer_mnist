@@ -20,7 +20,8 @@
  * @param channels Number of channels (classes)
  * @param innerSize Inner dimension size (typically batch size)
  */
-void softmax_vec(const float *i, float *o, uint64_t channels, uint64_t innerSize);
+void softmax_vec(const float *input, float *output, uint64_t channels,
+                 uint64_t innerSize);
 
 /**
  * @brief Scalar softmax activation (for verification)
@@ -33,5 +34,9 @@ void softmax_vec(const float *i, float *o, uint64_t channels, uint64_t innerSize
  */
 void softmax_scalar(const float *i, float *o, float *buf,
                     uint64_t channels, uint64_t innerSize);
+
+static inline void vector_exp_approx(unsigned int v_dst, unsigned int v_src, size_t vl);
+void softmax_vec_optimized(const float *input, float *output, uint64_t channels,
+                           uint64_t innerSize);
 
 #endif // __SOFTMAX_H__

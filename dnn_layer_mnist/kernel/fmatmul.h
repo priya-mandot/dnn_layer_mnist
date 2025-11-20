@@ -48,6 +48,13 @@ void fmatmul_vec_16x16_slice_init();
 void fmatmul_vec_16x16(float *c, const float *a, const float *b,
                        unsigned long int n, unsigned long int p);
 
+void fmatmul_gemv_optimized(float *c, const float *a, const float *b_transposed,
+                            const unsigned long int N, const unsigned long int P);
+
+void fmatmul_gemv_blocked(float *c, const float *a, const float *b,
+                          const unsigned long int N, const unsigned long int P);
+
+
 #define DELTA 0.000001
 
 extern int64_t event_trigger;

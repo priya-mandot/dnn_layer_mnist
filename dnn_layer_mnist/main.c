@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// MNIST DNN Layer Test Program for CVA6-Ara2 - With Detailed Timing
+// MNIST DNN Layer Test Program for CVA6-Ara2
 
 #include <stdint.h>
 #include <string.h>
@@ -52,15 +52,6 @@ extern float gold_output[] __attribute__((aligned(4 * NR_LANES)));
 
 #define THRESHOLD 0.01f
 
-// Timing structure for layer profiling
-// typedef struct {
-//     int64_t matmul_cycles;
-//     int64_t batchnorm_cycles;
-//     int64_t relu_cycles;
-//     int64_t softmax_cycles;
-//     int64_t total_cycles;
-// } layer_timing_t;
-
 // Helper function to print first 5 values
 static void print_first_5(const char *label, const float *arr) {
     printf("%s: ", label);
@@ -71,10 +62,10 @@ static void print_first_5(const char *label, const float *arr) {
 }
 
 // Print first N values of an array
-static void print_array(const char *name, const float *arr, unsigned long int size, unsigned long int limit) {
+static void print_array(const char *name, const float *arr, size_t size, size_t limit) {
     printf("%s: ", name);
-    unsigned long int print_count = (size < limit) ? size : limit;
-    for (unsigned long int i = 0; i < print_count; i++) {
+    size_t print_count = (size < limit) ? size : limit;
+    for (size_t i = 0; i < print_count; i++) {
         printf("%.6f ", arr[i]);
     }
     if (size > limit) printf("...");
@@ -82,12 +73,12 @@ static void print_array(const char *name, const float *arr, unsigned long int si
 }
 
 // Verification function
-static int verify_result(const float *result, const float *gold, unsigned long int size, float threshold) {
+static int verify_result(const float *result, const float *gold, size_t size, float threshold) {
     int errors = 0;
     float max_error = 0.0f;
     float sum_result = 0.0f, sum_gold = 0.0f;
     
-    for (unsigned long int i = 0; i < size; i++) {
+    for (size_t i = 0; i < size; i++) {
         sum_result += result[i];
         sum_gold += gold[i];
         
@@ -114,12 +105,12 @@ static int verify_result(const float *result, const float *gold, unsigned long i
 }
 
 // Validate softmax properties
-static int validate_softmax(const float *output, unsigned long int size) {
+static int validate_softmax(const float *output, size_t size) {
     float sum = 0.0f;
     int negative_count = 0;
     float min_val = output[0], max_val = output[0];
     
-    for (unsigned long int i = 0; i < size; i++) {
+    for (size_t i = 0; i < size; i++) {
         sum += output[i];
         if (output[i] < 0.0f) negative_count++;
         if (output[i] < min_val) min_val = output[i];
@@ -136,11 +127,11 @@ static int validate_softmax(const float *output, unsigned long int size) {
 }
 
 // Find predicted class and confidence
-static void analyze_prediction(const float *output, unsigned long int size) {
-    unsigned long int predicted_class = 0;
+static void analyze_prediction(const float *output, size_t size) {
+    size_t predicted_class = 0;
     float max_confidence = output[0];
     
-    for (unsigned long int i = 1; i < size; i++) {
+    for (size_t i = 1; i < size; i++) {
         if (output[i] > max_confidence) {
             max_confidence = output[i];
             predicted_class = i;
@@ -152,75 +143,13 @@ static void analyze_prediction(const float *output, unsigned long int size) {
     printf("  Confidence: %.3f%%\n", max_confidence * 100.0f);
 }
 
-// Print detailed timing breakdown
-static void print_timing_breakdown(const char *label, const layer_timing_t *timing) {
-    printf("\n%s TIMING BREAKDOWN:\n", label);
-    // printf("=" * 50);
-    printf("\n");
-    printf("  MatMul      : %6ld cycles (%5.1f%%)\n", 
-           timing->matmul_cycles, 
-           100.0 * timing->matmul_cycles / timing->total_cycles);
-    printf("  BatchNorm   : %6ld cycles (%5.1f%%)\n", 
-           timing->batchnorm_cycles,
-           100.0 * timing->batchnorm_cycles / timing->total_cycles);
-    printf("  ReLU        : %6ld cycles (%5.1f%%)\n", 
-           timing->relu_cycles,
-           100.0 * timing->relu_cycles / timing->total_cycles);
-    printf("  Softmax     : %6ld cycles (%5.1f%%)\n", 
-           timing->softmax_cycles,
-           100.0 * timing->softmax_cycles / timing->total_cycles);
-    // printf("  " "-" * 35);
-    double total_cycles = (double)timing->matmul_cycles + timing->batchnorm_cycles +
-                           timing->relu_cycles + timing->softmax_cycles;
-    printf("\n");
-    printf("  TOTAL       : %6ld cycles\n", total_cycles);
-    printf("\n");
-}
-
-// Compare timing between scalar and vector
-static void compare_timing(const layer_timing_t *scalar, const layer_timing_t *vector) {
-    printf("\n");
-    // printf("=" * 70);
-    printf("\n");
-    printf("SPEEDUP ANALYSIS\n");
-    // printf("=" * 70);
-    printf("\n");
-    printf("Layer          | Scalar    | Vector    | Speedup  | Notes\n");
-    // printf("-" * 70);
-    printf("\n");
-    
-    double matmul_speedup = (double)scalar->matmul_cycles / vector->matmul_cycles;
-    double bn_speedup = (double)scalar->batchnorm_cycles / vector->batchnorm_cycles;
-    double relu_speedup = (double)scalar->relu_cycles / vector->relu_cycles;
-    double softmax_speedup = (double)scalar->softmax_cycles / vector->softmax_cycles;
-    double vector_total_cycles =(double)vector->matmul_cycles + vector->batchnorm_cycles +
-                           vector->relu_cycles + vector->softmax_cycles;
-    double total_speedup = (double)scalar->total_cycles / vector_total_cycles;
-
-    printf("MatMul         | %9ld | %9ld | %6.2fx | Vectorized (strided load)\n", 
-           scalar->matmul_cycles, vector->matmul_cycles, matmul_speedup);
-    printf("BatchNorm      | %9ld | %9ld | %6.2fx | Scalar (both)\n", 
-           scalar->batchnorm_cycles, vector->batchnorm_cycles, bn_speedup);
-    printf("ReLU           | %9ld | %9ld | %6.2fx | Vectorized (mask)\n", 
-           scalar->relu_cycles, vector->relu_cycles, relu_speedup);
-    printf("Softmax        | %9ld | %9ld | %6.2fx | Vectorized (partial)\n", 
-           scalar->softmax_cycles, vector->softmax_cycles, softmax_speedup);
-    // printf("-" * 70);
-    printf("\n");
-    printf("TOTAL          | %9ld | %9ld | %6.2fx |\n", 
-           scalar->total_cycles, vector_total_cycles, total_speedup);
-    printf("\n");
-}
-
 int main() {
-    printf("MNIST DNN LAYER TEST - DETAILED TIMING\n");
-    // printf("=" * 70);
-    printf("\n");
+    printf("MNIST DNN LAYER TEST\n");
+    printf("====================\n");
     
     // Setup configuration
-    printf("Configuration: batch=%lu, input=%lu, output=%lu\n\n", 
+    printf("batch_size: %lu, input_size: %lu, output_size: %lu\n", 
            batch_size, input_size, output_size);
-    
     dnn_config_t config = {
         .batch_size = batch_size,
         .input_size = input_size,
@@ -235,62 +164,67 @@ int main() {
         .bn_var = bn_var,
         .bn_epsilon = bn_epsilon
     };
+    printf("Configuration: %lux%lu -> %lu\n\n", batch_size, input_size, output_size);
     
-    layer_timing_t scalar_timing = {0};
-    layer_timing_t vector_timing = {0};
-    
-    // ========== SCALAR IMPLEMENTATION ==========
+    // Run scalar implementation
     printf("===== SCALAR IMPLEMENTATION =====\n");
-    
+    printf("Running SCALAR Implementation...\n");
     start_timer();
-    dnn_layer_forward_scalar_timed(output_scalar, input_data, &params, &config, 
-                                   temp_buffer, &scalar_timing);
+    dnn_layer_forward_scalar(output_scalar, input_data, &params, &config, temp_buffer);
     stop_timer();
-    scalar_timing.total_cycles = get_timer();
+    int64_t scalar_cycles = get_timer();
+    printf("Scalar execution completed: %ld cycles\n\n", scalar_cycles);
     
-    printf("\nScalar layer outputs:\n");
-    print_first_5("  After MatMul   ", matmul_out_scalar);
+    printf("Scalar layer outputs:\n");
+    print_first_5("  After MatMul ", matmul_out_scalar);
     print_first_5("  After BatchNorm", bn_out_scalar);
-    print_first_5("  After ReLU     ", relu_out_scalar);
-    print_first_5("  After Softmax  ", output_scalar);
+    print_first_5("  After ReLU   ", relu_out_scalar);
+    print_first_5("  After Softmax", output_scalar);
+    printf("\n");
     
-    print_timing_breakdown("SCALAR", &scalar_timing);
-    
-    printf("\nVerifying scalar result against gold...\n");
+    // Validate scalar result
+    printf("Verifying scalar result against gold...\n");
     int scalar_errors = verify_result(output_scalar, gold_output, output_size, THRESHOLD);
     printf("\n");
     validate_softmax(output_scalar, output_size);
     printf("\n");
     analyze_prediction(output_scalar, output_size);
-    printf("Scalar implementation: %s\n", (scalar_errors <= 5) ? "PASSED" : "FAILED");
+    printf("Scalar implementation: %s\n\n", (scalar_errors <= 5) ? "PASSED" : "FAILED");
     
-    // ========== VECTORIZED IMPLEMENTATION ==========
-    printf("\n===== VECTORIZED IMPLEMENTATION =====\n");
-    
+    // Run vectorized implementation
+    printf("===== VECTORIZED IMPLEMENTATION =====\n");
+    printf("Running VECTORIZED Implementation...\n");
     start_timer();
-    dnn_layer_forward_timed(output_vec, input_data, &params, &config, 
-                           temp_buffer, &vector_timing);
+    dnn_layer_forward(output_vec, input_data, &params, &config, temp_buffer);
     stop_timer();
-    vector_timing.total_cycles = get_timer();
+    int64_t vector_cycles = get_timer();
+    printf("Vector execution completed: %ld cycles\n\n", vector_cycles);
     
-    printf("\nVector layer outputs:\n");
-    print_first_5("  After MatMul   ", matmul_out_vec);
+    printf("Vector layer outputs:\n");
+    print_first_5("  After MatMul ", matmul_out_vec);
     print_first_5("  After BatchNorm", bn_out_vec);
-    print_first_5("  After ReLU     ", relu_out_vec);
-    print_first_5("  After Softmax  ", output_vec);
+    print_first_5("  After ReLU   ", relu_out_vec);
+    print_first_5("  After Softmax", output_vec);
+    printf("\n");
     
-    print_timing_breakdown("VECTOR", &vector_timing);
-    
-    printf("\nVerifying vectorized result against gold...\n");
+    // Validate vector result
+    printf("Verifying vectorized result against gold...\n");
     int vector_errors = verify_result(output_vec, gold_output, output_size, THRESHOLD);
     printf("\n");
     validate_softmax(output_vec, output_size);
     printf("\n");
     analyze_prediction(output_vec, output_size);
-    printf("Vectorized implementation: %s\n", (vector_errors <= 5) ? "PASSED" : "FAILED");
+    printf("Vectorized implementation: %s\n\n", (vector_errors <= 5) ? "PASSED" : "FAILED");
     
-    // ========== COMPARISON ==========
-    compare_timing(&scalar_timing, &vector_timing);
+    
+    // Performance summary
+    printf("===== PERFORMANCE SUMMARY =====\n");
+    if (vector_cycles > 0 && scalar_cycles > 0) {
+        double speedup = (double)scalar_cycles / (double)vector_cycles;
+        printf("Scalar cycles: %lu\n", scalar_cycles);
+        printf("Vector cycles: %lu\n", vector_cycles);
+        printf("Measured speedup: %.2fx\n\n", speedup);
+    }
     
     // Final result
     int overall_pass = (scalar_errors <= 5) && (vector_errors <= 5);

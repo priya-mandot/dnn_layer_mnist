@@ -2,6 +2,7 @@
 """
 MNIST DNN Data Generator for Ara Build System
 Outputs assembly format to stdout for build system
+UPDATED: Emits transposed weights for optimized matmul
 """
 
 import numpy as np
@@ -148,6 +149,7 @@ def emit_debug_buffers(output_size):
     print("relu_out_vec:")
     print(f"    .zero {output_size * 4}")
     print()
+
 def emit_assembly_to_stdout(model, test_input, expected_output):
     """Emit assembly data to stdout for build system"""
     
@@ -199,8 +201,15 @@ def emit_assembly_to_stdout(model, test_input, expected_output):
     # Input data
     emit_array("input_data", test_input.astype(np.float32))
     
-    # Trained parameters
-    emit_array("weights", model.weights.astype(np.float32))
+    # CRITICAL CHANGE: Transpose weights from [P x N] to [N x P] for contiguous access
+    # Original: weights[P, N] means weights[output_size, input_size]
+    # Transposed: weights[N, P] means weights[input_size, output_size]
+    weights_transposed = model.weights.T  # Now [input_size x output_size]
+    
+    print(f"# TRANSPOSED WEIGHTS: Shape {weights_transposed.shape} for optimized GEMV", file=sys.stderr)
+    emit_array("weights", weights_transposed.astype(np.float32))
+    
+    # Batch norm parameters (unchanged)
     emit_array("bn_gamma", model.bn_gamma.astype(np.float32))
     emit_array("bn_beta", model.bn_beta.astype(np.float32))
     emit_array("bn_mean", model.bn_running_mean.astype(np.float32))
@@ -214,7 +223,7 @@ def emit_assembly_to_stdout(model, test_input, expected_output):
     emit_array("output_scalar", np.zeros(model.output_size, dtype=np.float32))
     emit_array("temp_buffer", np.zeros(max(model.input_size, model.output_size) * 4, dtype=np.float32))
     
-    # ADD THIS LINE:
+    # Debug buffers
     emit_debug_buffers(model.output_size)
     
 def main():

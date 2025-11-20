@@ -38,4 +38,14 @@ void batch_norm_scalar(float *output, const float *input,
                        const float *mean, const float *var,
                        float epsilon, size_t batch_size, size_t channels);
 
+void batch_norm_vec_fused(float *output, const float *input,
+                          const float *gamma, const float *beta,
+                          const float *mean, const float *var,
+                          float epsilon, size_t batch_size, size_t channels);
+
+void batch_norm_vec_optimized(float *output, const float *input,
+                               const float *gamma, const float *beta,
+                               const float *mean, const float *var,
+                               float epsilon, size_t batch_size, size_t channels);
+
 #endif // __BATCH_NORM_H__
